@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging / binaries
+build/
+dist/
+*.egg-info/
+*.exe
+!tools/MultiMonitorTool.exe
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Windows caches
+Thumbs.db
+Desktop.ini
+
+# App configurations & tools cache
+config.json
+*.cfg
+tools/*.cfg
