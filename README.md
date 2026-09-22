@@ -55,7 +55,7 @@ python main.py
 *(Requiere Python 3.10+ en Windows 10/11)*
 
 #### Opción 2: Ejecutable precompilado (`MonitorSwitch.exe`)
-Descarga el binario portable desde la pestaña **Releases**.
+Descarga el binario portable desde la pestaña **[Releases](https://github.com/ultratiza/DisplaySwitch/releases)**.
 > **Nota sobre el nombre**: El ejecutable se distribuye como `MonitorSwitch.exe` para no entrar en conflicto con la herramienta nativa de Windows `C:\Windows\System32\DisplaySwitch.exe` (el menú Win+P del sistema).
 
 ### Atajos por defecto
