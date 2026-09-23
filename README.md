@@ -23,7 +23,7 @@ python main.py
 *(Requires Python 3.10+ on Windows 10/11)*
 
 #### Option 2: Pre-built Binary (`MonitorSwitch.exe`)
-Download the standalone executable from the **[Releases](https://github.com/)** tab.
+Download the standalone executable from the **[Releases](https://github.com/ultratiza/DisplaySwitch/releases)** tab.
 > **Note on executable naming**: The standalone binary is named `MonitorSwitch.exe` specifically to avoid filename collisions with Windows' native `C:\Windows\System32\DisplaySwitch.exe` (the built-in Win+P projection utility).
 
 ### Default Shortcuts
@@ -55,7 +55,7 @@ python main.py
 *(Requiere Python 3.10+ en Windows 10/11)*
 
 #### Opción 2: Ejecutable precompilado (`MonitorSwitch.exe`)
-Descarga el binario portable desde la pestaña **Releases**.
+Descarga el binario portable desde la pestaña **[Releases](https://github.com/ultratiza/DisplaySwitch/releases)**.
 > **Nota sobre el nombre**: El ejecutable se distribuye como `MonitorSwitch.exe` para no entrar en conflicto con la herramienta nativa de Windows `C:\Windows\System32\DisplaySwitch.exe` (el menú Win+P del sistema).
 
 ### Atajos por defecto
