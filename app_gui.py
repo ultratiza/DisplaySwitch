@@ -20,54 +20,46 @@ def apply_dark_title_bar(window, bg_hex="#141721", fg_hex="#ffffff"):
     Aplica el modo oscuro y el color personalizado a la barra de título de Windows (DWM).
     Compatible con Windows 10 (18985+) y Windows 11 (22000+).
     """
-    def _apply():
-        try:
-            window.update_idletasks()
-            hwnd = window.winfo_id()
-            if not hwnd:
-                return
-            user32 = ctypes.windll.user32
-            dwmapi = ctypes.windll.dwmapi
-            parent = user32.GetParent(hwnd) or hwnd
-
-            # 1. DWMWA_USE_IMMERSIVE_DARK_MODE (20 en Win11/Win10 reciente, 19 en versiones anteriores de Win10)
-            DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-            DWMWA_USE_IMMERSIVE_DARK_MODE_OLD = 19
-            use_dark = ctypes.c_int(1)
-            res = dwmapi.DwmSetWindowAttribute(
-                parent, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(use_dark), ctypes.sizeof(use_dark)
-            )
-            if res != 0:
-                dwmapi.DwmSetWindowAttribute(
-                    parent, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, ctypes.byref(use_dark), ctypes.sizeof(use_dark)
-                )
-
-            # 2. DWMWA_CAPTION_COLOR (35) y DWMWA_TEXT_COLOR (36) en Windows 11
-            if bg_hex and bg_hex.startswith("#") and len(bg_hex) == 7:
-                r = int(bg_hex[1:3], 16)
-                g = int(bg_hex[3:5], 16)
-                b = int(bg_hex[5:7], 16)
-                colorref_bg = ctypes.c_int(r | (g << 8) | (b << 16))
-                DWMWA_CAPTION_COLOR = 35
-                dwmapi.DwmSetWindowAttribute(
-                    parent, DWMWA_CAPTION_COLOR, ctypes.byref(colorref_bg), ctypes.sizeof(colorref_bg)
-                )
-
-            if fg_hex and fg_hex.startswith("#") and len(fg_hex) == 7:
-                r = int(fg_hex[1:3], 16)
-                g = int(fg_hex[3:5], 16)
-                b = int(fg_hex[5:7], 16)
-                colorref_fg = ctypes.c_int(r | (g << 8) | (b << 16))
-                DWMWA_TEXT_COLOR = 36
-                dwmapi.DwmSetWindowAttribute(
-                    parent, DWMWA_TEXT_COLOR, ctypes.byref(colorref_fg), ctypes.sizeof(colorref_fg)
-                )
-        except Exception:
-            pass
-
     try:
-        _apply()
-        window.after(60, _apply)
+        hwnd = window.winfo_id()
+        if not hwnd:
+            return
+        user32 = ctypes.windll.user32
+        dwmapi = ctypes.windll.dwmapi
+        parent = user32.GetParent(hwnd) or hwnd
+
+        # 1. DWMWA_USE_IMMERSIVE_DARK_MODE (20 en Win11/Win10 reciente, 19 en versiones anteriores de Win10)
+        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        DWMWA_USE_IMMERSIVE_DARK_MODE_OLD = 19
+        use_dark = ctypes.c_int(1)
+        res = dwmapi.DwmSetWindowAttribute(
+            parent, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(use_dark), ctypes.sizeof(use_dark)
+        )
+        if res != 0:
+            dwmapi.DwmSetWindowAttribute(
+                parent, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, ctypes.byref(use_dark), ctypes.sizeof(use_dark)
+            )
+
+        # 2. DWMWA_CAPTION_COLOR (35) y DWMWA_TEXT_COLOR (36) en Windows 11
+        if bg_hex and bg_hex.startswith("#") and len(bg_hex) == 7:
+            r = int(bg_hex[1:3], 16)
+            g = int(bg_hex[3:5], 16)
+            b = int(bg_hex[5:7], 16)
+            colorref_bg = ctypes.c_int(r | (g << 8) | (b << 16))
+            DWMWA_CAPTION_COLOR = 35
+            dwmapi.DwmSetWindowAttribute(
+                parent, DWMWA_CAPTION_COLOR, ctypes.byref(colorref_bg), ctypes.sizeof(colorref_bg)
+            )
+
+        if fg_hex and fg_hex.startswith("#") and len(fg_hex) == 7:
+            r = int(fg_hex[1:3], 16)
+            g = int(fg_hex[3:5], 16)
+            b = int(fg_hex[5:7], 16)
+            colorref_fg = ctypes.c_int(r | (g << 8) | (b << 16))
+            DWMWA_TEXT_COLOR = 36
+            dwmapi.DwmSetWindowAttribute(
+                parent, DWMWA_TEXT_COLOR, ctypes.byref(colorref_fg), ctypes.sizeof(colorref_fg)
+            )
     except Exception:
         pass
 
@@ -158,28 +150,29 @@ class AboutModal(tk.Toplevel):
     """Ventana modal con información legal, créditos y derechos de autor de Software Libre"""
     def __init__(self, parent, controller):
         super().__init__(parent)
+        self.withdraw()  # Ocultar para evitar parpadeos y apariciones en (0, 0)
         self.controller = controller
         lang = self.controller.get_language()
         self.title(t("about_title", lang))
-        self.geometry("540x440")
         self.resizable(False, False)
         self.configure(bg="#0f1117")
-        apply_dark_title_bar(self)
         self.transient(parent)
-        self.grab_set()
 
+        w, h = 540, 440
         try:
-            self.update_idletasks()
             pw = parent.winfo_width()
             ph = parent.winfo_height()
             px = parent.winfo_rootx()
             py = parent.winfo_rooty()
-            w, h = 540, 440
-            x = px + (pw // 2) - (w // 2)
-            y = py + (ph // 2) - (h // 2)
+            if pw > 100 and ph > 100:
+                x = max(10, px + (pw // 2) - (w // 2))
+                y = max(10, py + (ph // 2) - (h // 2))
+            else:
+                x = max(10, (parent.winfo_screenwidth() // 2) - (w // 2))
+                y = max(10, (parent.winfo_screenheight() // 2) - (h // 2))
             self.geometry(f"{w}x{h}+{x}+{y}")
         except Exception:
-            pass
+            self.geometry(f"{w}x{h}")
 
         box = tk.Frame(self, bg="#141721", padx=24, pady=20)
         box.pack(fill="both", expand=True, padx=16, pady=16)
@@ -225,6 +218,10 @@ class AboutModal(tk.Toplevel):
             font=("Segoe UI Semibold", 9), width=90, height=30, radius=6
         )
         btn_close.pack(anchor="e")
+
+        self.deiconify()
+        self.grab_set()
+        apply_dark_title_bar(self)
 
 
 class ModernTooltip:
@@ -334,6 +331,8 @@ class ModernCheckbox(tk.Frame):
         self.active_fg = active_fg
         self._hovered = False
 
+        self._last_click_time = 0
+
         # Canvas para dibujar la casilla con bordes redondeados y tilde suave
         self.canvas = tk.Canvas(
             self, width=box_size, height=box_size,
@@ -355,32 +354,59 @@ class ModernCheckbox(tk.Frame):
         except Exception:
             pass
 
-        # Eventos de clic y hover en el frame, canvas y label
-        for widget in (self, self.canvas, self.label):
-            widget.bind("<Button-1>", self._on_click, add="+")
-            widget.bind("<Enter>", self._on_enter, add="+")
-            widget.bind("<Leave>", self._on_leave, add="+")
+        # Vincular clics y hover directamente sin duplicar en hijos
+        super().bind("<Button-1>", self._on_click)
+        self.canvas.bind("<Button-1>", self._on_click)
+        self.label.bind("<Button-1>", self._on_click)
+
+        super().bind("<Enter>", self._on_enter)
+        self.canvas.bind("<Enter>", self._on_enter)
+        self.label.bind("<Enter>", self._on_enter)
+
+        super().bind("<Leave>", self._on_leave)
+        self.canvas.bind("<Leave>", self._on_leave)
+        self.label.bind("<Leave>", self._on_leave)
 
         self._draw()
 
     def bind(self, sequence=None, func=None, add=None):
-        """Reenvía los bindings (como tooltips) tanto al frame como a sus componentes hijos"""
+        """Reenvía los bindings externos (como ModernTooltip) a los componentes hijos"""
         r1 = super().bind(sequence, func, add)
         self.canvas.bind(sequence, func, add)
         self.label.bind(sequence, func, add)
         return r1
 
     def _on_click(self, event=None):
+        now = time.time()
+        if now - self._last_click_time < 0.08:
+            return "break"
+        self._last_click_time = now
+
         new_val = not self.variable.get()
         self.variable.set(new_val)
         if self.command:
-            self.command()
+            try:
+                self.command()
+            except Exception:
+                pass
+        return "break"
 
     def _on_enter(self, event=None):
         self._hovered = True
         self._draw()
 
     def _on_leave(self, event=None):
+        if event and hasattr(event, "x_root") and hasattr(event, "y_root"):
+            try:
+                x, y = event.x_root, event.y_root
+                wx = self.winfo_rootx()
+                wy = self.winfo_rooty()
+                ww = self.winfo_width()
+                wh = self.winfo_height()
+                if wx <= x <= wx + ww and wy <= y <= wy + wh:
+                    return
+            except Exception:
+                pass
         self._hovered = False
         self._draw()
 
@@ -441,6 +467,7 @@ class SettingsModal(tk.Toplevel):
     """Ventana modal unificada para configurar preferencias generales, notificaciones y atajos globales"""
     def __init__(self, parent, controller, tray_manager, app=None, on_saved_callback=None):
         super().__init__(parent)
+        self.withdraw()  # Ocultar inmediatamente para evitar que aparezca en (0, 0) o parpadee
         self.controller = controller
         self.tray = tray_manager
         self.app = app
@@ -449,33 +476,34 @@ class SettingsModal(tk.Toplevel):
         app_title = self.controller.get_app_title()
         lang = self.controller.get_language()
         self.title(t("settings_title", lang, title=app_title))
-        self.geometry("760x640")
         self.minsize(720, 580)
         self.configure(bg="#0f1117")
-        apply_dark_title_bar(self)
         self.transient(parent)
-        self.grab_set()
 
-        # Centrar con respecto a la ventana principal
+        # Centrar con respecto a la ventana principal sin invocar update_idletasks prematuro
+        w, h = 760, 640
         try:
-            self.update_idletasks()
             pw = parent.winfo_width()
             ph = parent.winfo_height()
-            px = parent.winfo_x()
-            py = parent.winfo_y()
-            w = 760
-            h = 640
-            x = px + (pw // 2) - (w // 2)
-            y = py + (ph // 2) - (h // 2)
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            if pw > 100 and ph > 100:
+                x = max(10, px + (pw // 2) - (w // 2))
+                y = max(10, py + (ph // 2) - (h // 2))
+            else:
+                x = max(10, (parent.winfo_screenwidth() // 2) - (w // 2))
+                y = max(10, (parent.winfo_screenheight() // 2) - (h // 2))
             self.geometry(f"{w}x{h}+{x}+{y}")
         except Exception:
-            pass
+            self.geometry(f"{w}x{h}")
 
         self.current_hotkeys = dict(self.controller.get_hotkeys())
         self.notif_var = tk.BooleanVar(value=self.controller.get_show_notifications())
         self.restore_windows_var = tk.BooleanVar(value=self.controller.get_restore_window_layout())
         self.startup_var = self.app.startup_var if self.app else tk.BooleanVar(value=self.controller.is_startup_enabled())
         self.startup_var.set(self.controller.is_startup_enabled())
+        self.legacy_var = self.app.legacy_var if self.app else tk.BooleanVar(value=self.controller.get_legacy_mode())
+        self.legacy_var.set(self.controller.get_legacy_mode())
 
         self._recording_action = None
         self._value_labels = {}
@@ -483,6 +511,11 @@ class SettingsModal(tk.Toplevel):
         self._pressed_keys = set()
 
         self._build_ui()
+
+        # Mostrar y enfocar la ventana una vez completamente construida y posicionada
+        self.deiconify()
+        self.grab_set()
+        apply_dark_title_bar(self)
 
     def _format_display(self, hk_str):
         return format_hotkey_display(hk_str, lang=self.controller.get_language(), for_tray=False)
@@ -524,9 +557,15 @@ class SettingsModal(tk.Toplevel):
     def _on_toggle_legacy(self):
         if self.app:
             self.app._on_toggle_legacy_mode()
-            app_title = self.controller.get_app_title()
-            lang = self.controller.get_language()
-            self.title(t("settings_title", lang, title=app_title))
+        else:
+            self.controller.set_legacy_mode(self.legacy_var.get())
+        app_title = self.controller.get_app_title()
+        lang = self.controller.get_language()
+        self.title(t("settings_title", lang, title=app_title))
+
+    def destroy(self):
+        self._cancel_recording()
+        super().destroy()
 
     def _build_ui(self):
         lang = self.controller.get_language()
@@ -677,9 +716,8 @@ class SettingsModal(tk.Toplevel):
         cb_notif.pack(side="left", padx=(0, 24))
         ModernTooltip(cb_notif, t("pref_notif_desc", lang))
 
-        legacy_var = self.app.legacy_var if self.app else tk.BooleanVar(value=False)
         cb_legacy = ModernCheckbox(
-            chk_grid2, text=t("pref_legacy_label", lang), variable=legacy_var,
+            chk_grid2, text=t("pref_legacy_label", lang), variable=self.legacy_var,
             command=self._on_toggle_legacy,
             bg="#141721", fg="#f8fafc", font=("Segoe UI Semibold", 9)
         )
@@ -1028,6 +1066,7 @@ class ModernTrayMenu(tk.Toplevel):
     """
     def __init__(self, app, x=None, y=None):
         super().__init__(app.root)
+        self.withdraw()  # Ocultar para evitar aparición en (0, 0)
         self.app = app
         self.controller = app.controller
         self.tray = app.tray
@@ -1157,6 +1196,7 @@ class ModernTrayMenu(tk.Toplevel):
         pos_y = max(8, min(pos_y, screen_h - h - 8))
 
         self.geometry(f"{w}x{h}+{pos_x}+{pos_y}")
+        self.deiconify()
         self.focus_force()
 
     def _monitor_outside_clicks(self):
@@ -1246,9 +1286,10 @@ class DisplayFlowApp:
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
     def _setup_window_icon(self):
-        """Aplica el icono personalizado de Fede en la ventana y barra de tareas"""
+        """Aplica el icono personalizado en la ventana y barra de tareas"""
         app_dir = os.path.dirname(os.path.abspath(__file__))
         self._ico_path = os.path.join(app_dir, "app_icon.ico")
+        self._cached_hicons = None
 
         # Establecer AppUserModelID consistente con main.py para la barra de tareas
         try:
@@ -1263,18 +1304,26 @@ class DisplayFlowApp:
             except Exception:
                 pass
 
-        # Forzar iconos nativos de Win32 para asegurar que la barra de tareas muestre el icono de Fede
+        # Forzar iconos nativos de Win32 para asegurar que la barra de tareas muestre el icono propio
         self._apply_native_win32_icon()
-        self.root.bind("<Map>", lambda e: (self._apply_native_win32_icon(), apply_dark_title_bar(self.root)))
+        self.root.bind("<Map>", self._on_root_map)
+
+    def _on_root_map(self, event):
+        # Filtrar estrictamente solo el mapeo de la ventana raíz para evitar bucles infinitos con widgets hijos
+        if event.widget is self.root:
+            self._apply_native_win32_icon()
+            apply_dark_title_bar(self.root)
 
     def _apply_native_win32_icon(self):
-        """Aplica los iconos nativos de Win32 en la ventana y clase de ventana"""
+        """Aplica los iconos nativos de Win32 en la ventana y clase de ventana sin fugar recursos GDI/USER"""
         if not hasattr(self, "_ico_path") or not os.path.exists(self._ico_path):
             return
         try:
-            self.root.update_idletasks()
+            hwnd = self.root.winfo_id()
+            if not hwnd:
+                return
             user32 = ctypes.windll.user32
-            hwnd = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+            parent = user32.GetParent(hwnd) or hwnd
 
             WM_SETICON = 0x0080
             ICON_SMALL = 0
@@ -1284,17 +1333,22 @@ class DisplayFlowApp:
             GCLP_HICON = -14
             GCLP_HICONSM = -34
 
-            hicon_big = user32.LoadImageW(None, self._ico_path, IMAGE_ICON, 48, 48, LR_LOADFROMFILE)
-            hicon_sm = user32.LoadImageW(None, self._ico_path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
-            hicon_32 = user32.LoadImageW(None, self._ico_path, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+            # Cargar los iconos solo una vez en memoria en lugar de crearlos en cada ciclo
+            if not self._cached_hicons:
+                hicon_big = user32.LoadImageW(None, self._ico_path, IMAGE_ICON, 48, 48, LR_LOADFROMFILE)
+                hicon_sm = user32.LoadImageW(None, self._ico_path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+                hicon_32 = user32.LoadImageW(None, self._ico_path, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+                self._cached_hicons = (hicon_big, hicon_sm, hicon_32)
+            else:
+                hicon_big, hicon_sm, hicon_32 = self._cached_hicons
 
             h_main = hicon_big or hicon_32
             if h_main:
-                user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_main)
-                user32.SetClassLongPtrW(hwnd, GCLP_HICON, h_main)
+                user32.SendMessageW(parent, WM_SETICON, ICON_BIG, h_main)
+                user32.SetClassLongPtrW(parent, GCLP_HICON, h_main)
             if hicon_sm:
-                user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_sm)
-                user32.SetClassLongPtrW(hwnd, GCLP_HICONSM, hicon_sm)
+                user32.SendMessageW(parent, WM_SETICON, ICON_SMALL, hicon_sm)
+                user32.SetClassLongPtrW(parent, GCLP_HICONSM, hicon_sm)
         except Exception:
             pass
 
@@ -1596,8 +1650,16 @@ class DisplayFlowApp:
             pass
 
     def open_about_dialog(self):
-        """Abre el diálogo modal con información legal y créditos de Software Libre"""
-        AboutModal(self.root, self.controller)
+        """Abre el diálogo modal con información legal y créditos de Software Libre sin duplicados"""
+        if hasattr(self, "_about_window") and self._about_window and self._about_window.winfo_exists():
+            try:
+                self._about_window.deiconify()
+                self._about_window.lift()
+                self._about_window.focus_force()
+                return
+            except Exception:
+                pass
+        self._about_window = AboutModal(self.root, self.controller)
 
     def _on_toggle_legacy_mode(self):
         """Alterna el modo Legacy y actualiza los títulos en caliente"""
@@ -1610,8 +1672,16 @@ class DisplayFlowApp:
             self.tray.update_tooltip(f"{app_t}: Activo")
 
     def open_settings_modal(self):
-        """Abre la ventana modal unificada de Configuración"""
-        SettingsModal(self.root, self.controller, self.tray, app=self, on_saved_callback=self._on_settings_updated)
+        """Abre la ventana modal unificada de Configuración sin duplicados"""
+        if hasattr(self, "_settings_window") and self._settings_window and self._settings_window.winfo_exists():
+            try:
+                self._settings_window.deiconify()
+                self._settings_window.lift()
+                self._settings_window.focus_force()
+                return
+            except Exception:
+                pass
+        self._settings_window = SettingsModal(self.root, self.controller, self.tray, app=self, on_saved_callback=self._on_settings_updated)
 
     def open_hotkey_settings(self):
         """Redirige al gestor unificado de Configuración"""
@@ -1994,6 +2064,7 @@ class DisplayFlowApp:
         enabled = self.startup_var.get()
         ok, msg = self.controller.set_startup_enabled(enabled)
         if not ok:
+            self.startup_var.set(not enabled)
             messagebox.showerror("Error", msg)
 
     def show_tray_menu(self, x=None, y=None):

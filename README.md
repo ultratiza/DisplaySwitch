@@ -23,7 +23,7 @@ python main.py
 *(Requires Python 3.10+ on Windows 10/11)*
 
 #### Option 2: Pre-built Binary (`MonitorSwitch.exe`)
-Download the standalone executable from the **[Releases](https://github.com/ultratiza/DisplaySwitch/releases)** tab.
+Download the standalone executable from the **[Releases](https://github.com/)** tab.
 > **Note on executable naming**: The standalone binary is named `MonitorSwitch.exe` specifically to avoid filename collisions with Windows' native `C:\Windows\System32\DisplaySwitch.exe` (the built-in Win+P projection utility).
 
 ### Default Shortcuts
@@ -55,7 +55,7 @@ python main.py
 *(Requiere Python 3.10+ en Windows 10/11)*
 
 #### Opción 2: Ejecutable precompilado (`MonitorSwitch.exe`)
-Descarga el binario portable desde la pestaña **[Releases](https://github.com/ultratiza/DisplaySwitch/releases)**.
+Descarga el binario portable desde la pestaña **[Releases](https://github.com/)**.
 > **Nota sobre el nombre**: El ejecutable se distribuye como `MonitorSwitch.exe` para no entrar en conflicto con la herramienta nativa de Windows `C:\Windows\System32\DisplaySwitch.exe` (el menú Win+P del sistema).
 
 ### Atajos por defecto
@@ -75,7 +75,7 @@ Descarga el binario portable desde la pestaña **[Releases](https://github.com/u
 - **UltraTiza**: Development & Architecture
 - **FedeFadda**: Co-creator & Functional Design
 - **FedeNahas**: Testing & Quality Assurance
-- **Future-Plastic7826 From Reddit**: Testing, helping with suggestions and being very nice.
+- **u/Future-Plastic7826 From Reddit**: Testing, helping with suggestions and being very nice.
 
 ## License / Licencia
 This project is Free Software released under the terms of the **GNU General Public License v3.0 (GPLv3)**. See the [LICENSE](LICENSE) file for the full license text.
