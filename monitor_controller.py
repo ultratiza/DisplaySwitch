@@ -102,6 +102,14 @@ class DISPLAYCONFIG_SOURCE_DEVICE_NAME(ctypes.Structure):
 class POINTL(ctypes.Structure):
     _fields_ = [('x', wintypes.LONG), ('y', wintypes.LONG)]
 
+class RECT(ctypes.Structure):
+    _fields_ = [
+        ('left', wintypes.LONG),
+        ('top', wintypes.LONG),
+        ('right', wintypes.LONG),
+        ('bottom', wintypes.LONG)
+    ]
+
 class DEVMODEW(ctypes.Structure):
     _fields_ = [
         ('dmDeviceName', wintypes.WCHAR * 32),
@@ -174,6 +182,7 @@ class MonitorController:
         self.config = self._load_config()
         self._cached_monitors = []
         self._last_state_check = 0
+        self._saved_tv_windows = []
 
     def _load_config(self):
         """Carga la configuración de la aplicación"""
@@ -191,11 +200,13 @@ class MonitorController:
                 "extend_all": "Ctrl+Alt+E"
             },
             "startup_refresh_rates": {},
+            "cached_refresh_rates": {},
             "language": "en",
             "legacy_mode": False,
             "show_notifications": True,
             "minimize_to_tray_on_close": True,
-            "start_with_windows": False
+            "start_with_windows": False,
+            "restore_window_layout": False
         }
         if os.path.exists(self.config_path):
             try:
@@ -257,6 +268,64 @@ class MonitorController:
             self._save_config()
             return True
 
+    def get_restore_window_layout(self):
+        """Retorna si la restauración de ventanas en TV está activa (False por defecto)"""
+        return self.config.get("restore_window_layout", False)
+
+    def set_restore_window_layout(self, enabled: bool):
+        """Activa o desactiva la restauración de ventanas en TV"""
+        with self._lock:
+            self.config["restore_window_layout"] = bool(enabled)
+            self._save_config()
+            return True
+
+    def is_startup_enabled(self):
+        """Comprueba si la aplicación está configurada para iniciar con Windows en el Registro"""
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+            val, _ = winreg.QueryValueEx(key, "DisplaySwitch")
+            winreg.CloseKey(key)
+            return bool(val)
+        except Exception:
+            return False
+
+    def set_startup_enabled(self, enabled: bool):
+        """Activa o desactiva el inicio automático con Windows a través del Registro de usuario"""
+        # Limpieza de archivos .vbs huérfanos del método anterior en la carpeta Startup
+        try:
+            startup_dir = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
+            for dead_file in ("DisplaySwitch.vbs", "DisplayFlow.vbs"):
+                p = os.path.join(startup_dir, dead_file)
+                if os.path.exists(p):
+                    try: os.remove(p)
+                    except Exception: pass
+        except Exception:
+            pass
+
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+            if enabled:
+                exe_path = os.path.join(self.app_dir, "MonitorSwitch.exe")
+                if os.path.exists(exe_path):
+                    cmd = f'"{exe_path}" --minimized'
+                else:
+                    main_py = os.path.join(self.app_dir, "main.py")
+                    cmd = f'pythonw.exe "{main_py}" --minimized'
+                winreg.SetValueEx(key, "DisplaySwitch", 0, winreg.REG_SZ, cmd)
+            else:
+                try:
+                    winreg.DeleteValue(key, "DisplaySwitch")
+                except FileNotFoundError:
+                    pass
+            winreg.CloseKey(key)
+            with self._lock:
+                self.config["start_with_windows"] = bool(enabled)
+                self._save_config()
+            return True, "Configuración de inicio con Windows actualizada."
+        except Exception as e:
+            return False, f"Error al modificar el inicio en el Registro: {e}"
+
     def get_app_title(self):
         """Retorna el título dinámico según el modo Legacy e idioma"""
         lang = self.get_language()
@@ -284,6 +353,13 @@ class MonitorController:
                 self.config["startup_refresh_rates"] = {}
             self.config["startup_refresh_rates"][m_id] = hz
             self._save_config()
+
+        # Si el monitor está inactivo/apagado, queda registrado como frecuencia de inicio
+        # sin necesidad de intentar cambiar la frecuencia de una pantalla desconectada
+        monitors = self.get_connected_monitors()
+        target = next((m for m in monitors if m.short_id == m_id or m.friendly_name == m_id or m.gdi_name == m_id), None)
+        if target and not target.is_active:
+            return True, t("notif_hz_applied", self.get_language(), name=target.friendly_name or m_id, hz=hz)
 
         # Aplicar con MultiMonitorTool fuera del lock para no bloquear otros hilos
         if os.path.exists(self.tools_exe):
@@ -639,8 +715,29 @@ class MonitorController:
                 elif hz > 0:
                     available_hz = [hz]
 
+                # Si tenemos tasas disponibles y un short_id, actualizamos el caché
+                if available_hz and short_id:
+                    cached_dict = self.config.setdefault("cached_refresh_rates", {})
+                    if cached_dict.get(short_id) != available_hz:
+                        cached_dict[short_id] = available_hz
+                        self._save_config()
+                elif not available_hz and short_id:
+                    # Si la pantalla está inactiva o apagada, recuperamos sus frecuencias conocidas
+                    cached = self.config.get("cached_refresh_rates", {}).get(short_id)
+                    if cached:
+                        available_hz = list(cached)
+
                 startup_rates = self.get_startup_refresh_rates()
                 startup_hz = startup_rates.get(short_id, hz)
+
+                # Si aún no hay frecuencias disponibles, asegurar al menos startup_hz o 60 Hz
+                if not available_hz:
+                    if startup_hz > 0:
+                        available_hz = [startup_hz]
+                    elif hz > 0:
+                        available_hz = [hz]
+                    else:
+                        available_hz = [60]
 
                 m_obj = MonitorInfo(
                     target_id=tid,
@@ -711,6 +808,139 @@ class MonitorController:
             return False, "No se encontró ningún televisor configurado."
         return self.turn_on_monitor(tv)
 
+    def _get_monitor_rect(self, monitor):
+        """Retorna el rectángulo (left, top, right, bottom) del monitor en coordenadas virtuales"""
+        if not monitor:
+            return None
+        gdi = monitor.gdi_name
+        if not gdi:
+            for m in self.get_connected_monitors():
+                if m.short_id == monitor.short_id and m.gdi_name:
+                    gdi = m.gdi_name
+                    break
+        if not gdi:
+            return None
+        dm = DEVMODEW()
+        dm.dmSize = ctypes.sizeof(DEVMODEW)
+        if user32.EnumDisplaySettingsW(gdi, -1, ctypes.byref(dm)):
+            return (dm.dmPosition.x, dm.dmPosition.y, dm.dmPosition.x + dm.dmPelsWidth, dm.dmPosition.y + dm.dmPelsHeight)
+        return None
+
+    def _snapshot_tv_windows(self):
+        """Guarda la posición de las ventanas abiertas en el televisor antes de apagarlo"""
+        if not self.get_restore_window_layout():
+            self._saved_tv_windows = []
+            return
+
+        tv = self.get_designated_tv()
+        if not tv or not tv.is_active:
+            return
+
+        tv_rect = self._get_monitor_rect(tv)
+        if not tv_rect:
+            return
+
+        saved = []
+        DESKTOPENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def enum_proc(hwnd, lparam):
+            try:
+                if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+                    return True
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length == 0:
+                    return True
+                ex_style = user32.GetWindowLongW(hwnd, -20)
+                if ex_style & 0x00000080:  # WS_EX_TOOLWINDOW
+                    return True
+
+                class_buf = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(hwnd, class_buf, 256)
+                c_name = class_buf.value
+                if c_name in ("Progman", "Shell_TrayWnd", "Windows.UI.Core.CoreWindow", "WorkerW"):
+                    return True
+
+                rect = RECT()
+                user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                w = rect.right - rect.left
+                h = rect.bottom - rect.top
+                if w <= 10 or h <= 10:
+                    return True
+
+                cx = (rect.left + rect.right) // 2
+                cy = (rect.top + rect.bottom) // 2
+
+                if tv_rect[0] <= cx < tv_rect[2] and tv_rect[1] <= cy < tv_rect[3]:
+                    is_zoomed = bool(user32.IsZoomed(hwnd))
+                    saved.append({
+                        "hwnd": hwnd,
+                        "is_zoomed": is_zoomed,
+                        "rel_x": rect.left - tv_rect[0],
+                        "rel_y": rect.top - tv_rect[1],
+                        "width": w,
+                        "height": h
+                    })
+            except Exception:
+                pass
+            return True
+
+        cb = DESKTOPENUMPROC(enum_proc)
+        try:
+            hdesk = user32.OpenDesktopW("Default", 0, False, 0x0100 | 0x0040 | 0x0001)
+            if hdesk:
+                user32.EnumDesktopWindows(hdesk, cb, 0)
+                user32.CloseDesktop(hdesk)
+            else:
+                user32.EnumWindows(cb, 0)
+        except Exception:
+            user32.EnumWindows(cb, 0)
+
+        self._saved_tv_windows = saved
+
+    def _restore_tv_windows(self):
+        """Restaura las ventanas en el televisor luego de encenderlo"""
+        if not self.get_restore_window_layout() or not self._saved_tv_windows:
+            return
+
+        time.sleep(1.0)
+        tv = self.get_designated_tv()
+        if not tv:
+            return
+
+        tv_rect = self._get_monitor_rect(tv)
+        if not tv_rect:
+            self.get_connected_monitors(force_refresh=True)
+            tv = self.get_designated_tv()
+            if tv:
+                tv_rect = self._get_monitor_rect(tv)
+            if not tv_rect:
+                return
+
+        SWP_NOZORDER = 0x0004
+        SWP_NOACTIVATE = 0x0010
+        SW_RESTORE = 9
+        SW_MAXIMIZE = 3
+
+        for win in self._saved_tv_windows:
+            hwnd = win["hwnd"]
+            try:
+                if user32.IsWindow(hwnd):
+                    new_x = tv_rect[0] + win["rel_x"]
+                    new_y = tv_rect[1] + win["rel_y"]
+                    w = win["width"]
+                    h = win["height"]
+
+                    if win["is_zoomed"]:
+                        user32.ShowWindow(hwnd, SW_RESTORE)
+                        user32.SetWindowPos(hwnd, 0, new_x, new_y, w, h, SWP_NOZORDER | SWP_NOACTIVATE)
+                        user32.ShowWindow(hwnd, SW_MAXIMIZE)
+                    else:
+                        user32.SetWindowPos(hwnd, 0, new_x, new_y, w, h, SWP_NOZORDER | SWP_NOACTIVATE)
+            except Exception:
+                pass
+
+        self._saved_tv_windows = []
+
     def turn_off_monitor(self, monitor_or_id):
         """Desactiva un monitor o televisor específico usando su identificador persistente"""
         target_m = self._resolve_monitor(monitor_or_id)
@@ -719,6 +949,9 @@ class MonitorController:
 
         if not target_m.is_active:
             return True, t("msg_tv_off", self.get_language(), tv=target_m.friendly_name)
+
+        if target_m.is_designated_tv:
+            self._snapshot_tv_windows()
 
         monitors = self.get_connected_monitors(force_refresh=True)
         active_monitors = [m for m in monitors if m.is_active]
@@ -809,6 +1042,9 @@ class MonitorController:
                         except Exception:
                             pass
 
+                if target_m.is_designated_tv:
+                    threading.Thread(target=self._restore_tv_windows, daemon=True).start()
+
                 self.get_connected_monitors(force_refresh=True)
                 return True, t("msg_tv_on", self.get_language(), tv=target_m.friendly_name)
             except Exception as e:
@@ -855,6 +1091,8 @@ class MonitorController:
         if not tvs:
             # Si no hay ningún televisor designado, encender y extender todos los monitores
             return self.set_extend_all_mode()
+
+        self._snapshot_tv_windows()
 
         if os.path.exists(self.tools_exe):
             try:
@@ -952,6 +1190,7 @@ class MonitorController:
                 time.sleep(0.5)
                 # 4. Aplicar tasas de refresco SOLO a las TVs activas
                 self.apply_startup_refresh_rates(only_ids=tv_clean_ids)
+                threading.Thread(target=self._restore_tv_windows, daemon=True).start()
                 self.get_connected_monitors(force_refresh=True)
                 return True, t("msg_tv_only_applied", self.get_language())
             except Exception as e:
@@ -1010,6 +1249,7 @@ class MonitorController:
 
         # 4. Aplicar tasas de refresco configuradas a todas las pantallas
         self.apply_startup_refresh_rates()
+        threading.Thread(target=self._restore_tv_windows, daemon=True).start()
         time.sleep(0.4)
         self.get_connected_monitors(force_refresh=True)
         return True, t("msg_extend_applied", self.get_language())
@@ -1024,7 +1264,7 @@ class MonitorController:
         monitors = self.get_connected_monitors(force_refresh=True)
         tv = self.get_designated_tv()
         if not tv:
-            return False, "No hay ningún televisor designado para duplicar. Por favor designa uno con 'Setear como TV'."
+            return False, "No hay ningún televisor designado para duplicar. Por favor designa uno con 'Designar TV'."
 
         # Encontrar monitor principal y secundarios que no sean la TV
         primary_m = None

@@ -15,6 +15,63 @@ import ctypes
 from ctypes import wintypes
 from i18n import t, format_hotkey_display
 
+def apply_dark_title_bar(window, bg_hex="#141721", fg_hex="#ffffff"):
+    """
+    Aplica el modo oscuro y el color personalizado a la barra de título de Windows (DWM).
+    Compatible con Windows 10 (18985+) y Windows 11 (22000+).
+    """
+    def _apply():
+        try:
+            window.update_idletasks()
+            hwnd = window.winfo_id()
+            if not hwnd:
+                return
+            user32 = ctypes.windll.user32
+            dwmapi = ctypes.windll.dwmapi
+            parent = user32.GetParent(hwnd) or hwnd
+
+            # 1. DWMWA_USE_IMMERSIVE_DARK_MODE (20 en Win11/Win10 reciente, 19 en versiones anteriores de Win10)
+            DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+            DWMWA_USE_IMMERSIVE_DARK_MODE_OLD = 19
+            use_dark = ctypes.c_int(1)
+            res = dwmapi.DwmSetWindowAttribute(
+                parent, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(use_dark), ctypes.sizeof(use_dark)
+            )
+            if res != 0:
+                dwmapi.DwmSetWindowAttribute(
+                    parent, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, ctypes.byref(use_dark), ctypes.sizeof(use_dark)
+                )
+
+            # 2. DWMWA_CAPTION_COLOR (35) y DWMWA_TEXT_COLOR (36) en Windows 11
+            if bg_hex and bg_hex.startswith("#") and len(bg_hex) == 7:
+                r = int(bg_hex[1:3], 16)
+                g = int(bg_hex[3:5], 16)
+                b = int(bg_hex[5:7], 16)
+                colorref_bg = ctypes.c_int(r | (g << 8) | (b << 16))
+                DWMWA_CAPTION_COLOR = 35
+                dwmapi.DwmSetWindowAttribute(
+                    parent, DWMWA_CAPTION_COLOR, ctypes.byref(colorref_bg), ctypes.sizeof(colorref_bg)
+                )
+
+            if fg_hex and fg_hex.startswith("#") and len(fg_hex) == 7:
+                r = int(fg_hex[1:3], 16)
+                g = int(fg_hex[3:5], 16)
+                b = int(fg_hex[5:7], 16)
+                colorref_fg = ctypes.c_int(r | (g << 8) | (b << 16))
+                DWMWA_TEXT_COLOR = 36
+                dwmapi.DwmSetWindowAttribute(
+                    parent, DWMWA_TEXT_COLOR, ctypes.byref(colorref_fg), ctypes.sizeof(colorref_fg)
+                )
+        except Exception:
+            pass
+
+    try:
+        _apply()
+        window.after(60, _apply)
+    except Exception:
+        pass
+
+
 class ModernButton(tk.Canvas):
     """Botón con esquinas redondeadas, animaciones hover, auto-escalado responsive y soporte de iconos"""
     def __init__(self, parent, text, command, bg_color="#6366f1", hover_color="#4f46e5", 
@@ -107,6 +164,7 @@ class AboutModal(tk.Toplevel):
         self.geometry("540x440")
         self.resizable(False, False)
         self.configure(bg="#0f1117")
+        apply_dark_title_bar(self)
         self.transient(parent)
         self.grab_set()
 
@@ -169,6 +227,216 @@ class AboutModal(tk.Toplevel):
         btn_close.pack(anchor="e")
 
 
+class ModernTooltip:
+    """Tooltip flotante moderno estilo HTML (atributo title) con retardo suave y apariencia oscura"""
+    def __init__(self, widget, text, delay=250):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self._tip_window = None
+        self._id = None
+
+        self.widget.bind("<Enter>", self._on_enter, add="+")
+        self.widget.bind("<Leave>", self._on_leave, add="+")
+        self.widget.bind("<ButtonPress>", self._on_leave, add="+")
+        self.widget.bind("<Destroy>", self._on_destroy, add="+")
+
+    def _on_enter(self, event=None):
+        self._cancel()
+        if self.text:
+            self._id = self.widget.after(self.delay, self._show)
+
+    def _on_leave(self, event=None):
+        self._cancel()
+        self._hide()
+
+    def _on_destroy(self, event=None):
+        self._cancel()
+        self._hide()
+
+    def _cancel(self):
+        if self._id:
+            try:
+                self.widget.after_cancel(self._id)
+            except Exception:
+                pass
+            self._id = None
+
+    def _show(self):
+        if self._tip_window or not self.text:
+            return
+        try:
+            try:
+                x = self.widget.winfo_pointerx() + 12
+                y = self.widget.winfo_pointery() + 18
+            except Exception:
+                x = self.widget.winfo_rootx() + 20
+                y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+
+            self._tip_window = tw = tk.Toplevel(self.widget)
+            tw.wm_overrideredirect(True)
+            try:
+                tw.attributes("-topmost", True)
+            except Exception:
+                pass
+            tw.configure(bg="#262b3b")
+
+            box = tk.Frame(tw, bg="#161922", highlightbackground="#3b82f6", highlightthickness=1)
+            box.pack(fill="both", expand=True)
+
+            lbl = tk.Label(
+                box, text=self.text, justify="left",
+                background="#161922", foreground="#f8fafc",
+                font=("Segoe UI", 8), wraplength=340, padx=8, pady=5
+            )
+            lbl.pack()
+
+            tw.update_idletasks()
+            sw = tw.winfo_screenwidth()
+            sh = tw.winfo_screenheight()
+            w = tw.winfo_width()
+            h = tw.winfo_height()
+
+            if x + w > sw - 10:
+                x = max(10, sw - w - 10)
+            if y + h > sh - 30:
+                y = max(10, y - h - 35)
+
+            tw.wm_geometry(f"+{x}+{y}")
+        except Exception:
+            self._hide()
+
+    def _hide(self):
+        tw = self._tip_window
+        self._tip_window = None
+        if tw:
+            try:
+                tw.destroy()
+            except Exception:
+                pass
+
+
+class ModernCheckbox(tk.Frame):
+    """
+    Checkbox estilizado moderno para el tema oscuro de la aplicación.
+    Reemplaza el tk.Checkbutton nativo clásico de Win32.
+    """
+    def __init__(self, parent, text="", variable=None, command=None,
+                 bg="#141721", fg="#f8fafc", active_fg="#ffffff",
+                 box_size=18, font=("Segoe UI Semibold", 9), cursor="hand2", **kwargs):
+        super().__init__(parent, bg=bg, cursor=cursor, **kwargs)
+        self.variable = variable if variable is not None else tk.BooleanVar(value=False)
+        self.command = command
+        self.text = text
+        self.box_size = box_size
+        self.bg = bg
+        self.fg = fg
+        self.active_fg = active_fg
+        self._hovered = False
+
+        # Canvas para dibujar la casilla con bordes redondeados y tilde suave
+        self.canvas = tk.Canvas(
+            self, width=box_size, height=box_size,
+            bg=bg, highlightthickness=0, cursor=cursor
+        )
+        self.canvas.pack(side="left", padx=(0, 7), pady=2)
+
+        # Label con el texto descriptivo
+        self.label = tk.Label(
+            self, text=text, font=font, bg=bg, fg=fg,
+            cursor=cursor, anchor="w"
+        )
+        self.label.pack(side="left", fill="x", expand=True)
+
+        # Rastrear cambios en la variable asociada
+        self._trace_id = None
+        try:
+            self._trace_id = self.variable.trace_add("write", lambda *args: self._draw())
+        except Exception:
+            pass
+
+        # Eventos de clic y hover en el frame, canvas y label
+        for widget in (self, self.canvas, self.label):
+            widget.bind("<Button-1>", self._on_click, add="+")
+            widget.bind("<Enter>", self._on_enter, add="+")
+            widget.bind("<Leave>", self._on_leave, add="+")
+
+        self._draw()
+
+    def bind(self, sequence=None, func=None, add=None):
+        """Reenvía los bindings (como tooltips) tanto al frame como a sus componentes hijos"""
+        r1 = super().bind(sequence, func, add)
+        self.canvas.bind(sequence, func, add)
+        self.label.bind(sequence, func, add)
+        return r1
+
+    def _on_click(self, event=None):
+        new_val = not self.variable.get()
+        self.variable.set(new_val)
+        if self.command:
+            self.command()
+
+    def _on_enter(self, event=None):
+        self._hovered = True
+        self._draw()
+
+    def _on_leave(self, event=None):
+        self._hovered = False
+        self._draw()
+
+    def _draw(self):
+        self.canvas.delete("all")
+        is_checked = bool(self.variable.get())
+        s = self.box_size
+        r = 4
+
+        if is_checked:
+            box_bg = "#2563eb"
+            border_color = "#60a5fa" if self._hovered else "#3b82f6"
+        else:
+            box_bg = "#1e2230"
+            border_color = "#60a5fa" if self._hovered else "#334155"
+
+        self._create_rounded_rect(self.canvas, 1, 1, s - 1, s - 1, radius=r, fill=box_bg, outline=border_color, width=1.5)
+
+        if is_checked:
+            p1 = (s * 0.25, s * 0.52)
+            p2 = (s * 0.44, s * 0.73)
+            p3 = (s * 0.77, s * 0.27)
+            self.canvas.create_line(p1[0], p1[1], p2[0], p2[1], fill="#ffffff", width=2.2, capstyle="round")
+            self.canvas.create_line(p2[0], p2[1], p3[0], p3[1], fill="#ffffff", width=2.2, capstyle="round")
+
+        if self._hovered:
+            self.label.config(fg=self.active_fg)
+        else:
+            self.label.config(fg=self.fg)
+
+    def _create_rounded_rect(self, canvas, x1, y1, x2, y2, radius=4, **kwargs):
+        points = [
+            x1 + radius, y1,
+            x2 - radius, y1,
+            x2, y1,
+            x2, y1 + radius,
+            x2, y2 - radius,
+            x2, y2,
+            x2 - radius, y2,
+            x1 + radius, y2,
+            x1, y2,
+            x1, y2 - radius,
+            x1, y1 + radius,
+            x1, y1
+        ]
+        return canvas.create_polygon(points, smooth=True, **kwargs)
+
+    def destroy(self):
+        if self._trace_id:
+            try:
+                self.variable.trace_remove("write", self._trace_id)
+            except Exception:
+                pass
+        super().destroy()
+
+
 class SettingsModal(tk.Toplevel):
     """Ventana modal unificada para configurar preferencias generales, notificaciones y atajos globales"""
     def __init__(self, parent, controller, tray_manager, app=None, on_saved_callback=None):
@@ -181,9 +449,10 @@ class SettingsModal(tk.Toplevel):
         app_title = self.controller.get_app_title()
         lang = self.controller.get_language()
         self.title(t("settings_title", lang, title=app_title))
-        self.geometry("750x700")
-        self.minsize(700, 650)
+        self.geometry("760x640")
+        self.minsize(720, 580)
         self.configure(bg="#0f1117")
+        apply_dark_title_bar(self)
         self.transient(parent)
         self.grab_set()
 
@@ -194,8 +463,8 @@ class SettingsModal(tk.Toplevel):
             ph = parent.winfo_height()
             px = parent.winfo_x()
             py = parent.winfo_y()
-            w = 750
-            h = 700
+            w = 760
+            h = 640
             x = px + (pw // 2) - (w // 2)
             y = py + (ph // 2) - (h // 2)
             self.geometry(f"{w}x{h}+{x}+{y}")
@@ -204,6 +473,10 @@ class SettingsModal(tk.Toplevel):
 
         self.current_hotkeys = dict(self.controller.get_hotkeys())
         self.notif_var = tk.BooleanVar(value=self.controller.get_show_notifications())
+        self.restore_windows_var = tk.BooleanVar(value=self.controller.get_restore_window_layout())
+        self.startup_var = self.app.startup_var if self.app else tk.BooleanVar(value=self.controller.is_startup_enabled())
+        self.startup_var.set(self.controller.is_startup_enabled())
+
         self._recording_action = None
         self._value_labels = {}
         self._record_buttons = {}
@@ -236,6 +509,17 @@ class SettingsModal(tk.Toplevel):
     def _on_toggle_notif(self):
         val = self.notif_var.get()
         self.controller.set_show_notifications(val)
+
+    def _on_toggle_restore_windows(self):
+        val = self.restore_windows_var.get()
+        self.controller.set_restore_window_layout(val)
+
+    def _on_toggle_startup(self):
+        if self.app:
+            self.app._on_toggle_startup()
+        else:
+            val = self.startup_var.get()
+            self.controller.set_startup_enabled(val)
 
     def _on_toggle_legacy(self):
         if self.app:
@@ -272,17 +556,17 @@ class SettingsModal(tk.Toplevel):
 
         # Contenido Principal
         body = tk.Frame(self, bg="#0f1117")
-        body.pack(fill="both", expand=True, padx=20, pady=14)
+        body.pack(fill="both", expand=True, padx=20, pady=12)
 
         # 1. SECCIÓN: PREFERENCIAS GENERALES
         pref_box = tk.Frame(body, bg="#141721", highlightbackground="#262b3b", highlightthickness=1)
-        pref_box.pack(fill="x", pady=(0, 14), ipady=6)
+        pref_box.pack(fill="x", pady=(0, 12), ipady=6)
 
         pref_header = tk.Frame(pref_box, bg="#141721")
         pref_header.pack(fill="x", padx=14, pady=(6, 4))
         tk.Label(pref_header, text=t("sec_general_prefs", lang), font=("Segoe UI Bold", 9), bg="#141721", fg="#94a3b8").pack(anchor="w")
 
-        # Fila 0: Idioma / Language (Rótulo fijo universal)
+        # Fila 0: Idioma / Language
         row_lang = tk.Frame(pref_box, bg="#141721")
         row_lang.pack(fill="x", padx=14, pady=3)
 
@@ -298,15 +582,17 @@ class SettingsModal(tk.Toplevel):
 
         cb_lang = ttk.Combobox(
             row_lang, textvariable=self.lang_var, values=["English", "Español"],
-            state="readonly", width=10, font=("Segoe UI Semibold", 9)
+            state="readonly", width=12, font=("Segoe UI Semibold", 9)
         )
         cb_lang.pack(side="left", padx=(8, 8))
         cb_lang.bind("<<ComboboxSelected>>", self._on_language_changed)
 
-        tk.Label(
-            row_lang, text=t("pref_language_desc", lang),
-            font=("Segoe UI", 8), bg="#141721", fg="#64748b"
-        ).pack(side="left")
+        lang_tip = tk.Label(row_lang, text="ℹ️", font=("Segoe UI", 8), bg="#141721", fg="#64748b", cursor="hand2")
+        lang_tip.pack(side="left")
+
+        ModernTooltip(lbl_lang, t("pref_language_desc", lang))
+        ModernTooltip(cb_lang, t("pref_language_desc", lang))
+        ModernTooltip(lang_tip, t("pref_language_desc", lang))
 
         # Fila 0.5: Monitor Principal por defecto
         row_prim = tk.Frame(pref_box, bg="#141721")
@@ -338,7 +624,7 @@ class SettingsModal(tk.Toplevel):
         self.prim_var = tk.StringVar(value=initial_label)
         cb_prim = ttk.Combobox(
             row_prim, textvariable=self.prim_var, values=list(mon_map.keys()),
-            state="readonly", width=22, font=("Segoe UI Semibold", 9)
+            state="readonly", width=26, font=("Segoe UI Semibold", 9)
         )
         cb_prim.pack(side="left", padx=(8, 8))
 
@@ -353,48 +639,52 @@ class SettingsModal(tk.Toplevel):
 
         cb_prim.bind("<<ComboboxSelected>>", _on_primary_selected)
 
-        tk.Label(
-            row_prim, text=t("pref_primary_desc", lang),
-            font=("Segoe UI", 8), bg="#141721", fg="#64748b"
-        ).pack(side="left")
+        prim_tip = tk.Label(row_prim, text="ℹ️", font=("Segoe UI", 8), bg="#141721", fg="#64748b", cursor="hand2")
+        prim_tip.pack(side="left")
 
-        # Fila 1: Iniciar con Windows
-        row1 = tk.Frame(pref_box, bg="#141721")
-        row1.pack(fill="x", padx=14, pady=3)
-        startup_var = self.app.startup_var if self.app else tk.BooleanVar(value=False)
-        cb_startup = tk.Checkbutton(
-            row1, text=t("pref_startup_label", lang), variable=startup_var,
-            command=self.app._on_toggle_startup if self.app else None,
-            bg="#141721", fg="#ffffff", selectcolor="#1e2230", activebackground="#141721", activeforeground="#ffffff",
-            font=("Segoe UI Semibold", 9)
+        ModernTooltip(lbl_prim, t("pref_primary_desc", lang))
+        ModernTooltip(cb_prim, t("pref_primary_desc", lang))
+        ModernTooltip(prim_tip, t("pref_primary_desc", lang))
+
+        # Cuadrícula compacta de Checkboxes (2 filas x 2 columnas con tooltips completos)
+        chk_grid1 = tk.Frame(pref_box, bg="#141721")
+        chk_grid1.pack(fill="x", padx=14, pady=(6, 3))
+
+        cb_startup = ModernCheckbox(
+            chk_grid1, text=t("pref_startup_label", lang), variable=self.startup_var,
+            command=self._on_toggle_startup,
+            bg="#141721", fg="#f8fafc", font=("Segoe UI Semibold", 9)
         )
-        cb_startup.pack(side="left")
-        tk.Label(row1, text=t("pref_startup_desc", lang), font=("Segoe UI", 8), bg="#141721", fg="#64748b").pack(side="left", padx=8)
+        cb_startup.pack(side="left", padx=(0, 24))
+        ModernTooltip(cb_startup, t("pref_startup_desc", lang))
 
-        # Fila 2: Notificaciones de Windows
-        row2 = tk.Frame(pref_box, bg="#141721")
-        row2.pack(fill="x", padx=14, pady=3)
-        cb_notif = tk.Checkbutton(
-            row2, text=t("pref_notif_label", lang), variable=self.notif_var,
+        cb_restore = ModernCheckbox(
+            chk_grid1, text=t("pref_restore_windows_label", lang), variable=self.restore_windows_var,
+            command=self._on_toggle_restore_windows,
+            bg="#141721", fg="#f8fafc", font=("Segoe UI Semibold", 9)
+        )
+        cb_restore.pack(side="left")
+        ModernTooltip(cb_restore, t("pref_restore_windows_desc", lang))
+
+        chk_grid2 = tk.Frame(pref_box, bg="#141721")
+        chk_grid2.pack(fill="x", padx=14, pady=(3, 4))
+
+        cb_notif = ModernCheckbox(
+            chk_grid2, text=t("pref_notif_label", lang), variable=self.notif_var,
             command=self._on_toggle_notif,
-            bg="#141721", fg="#ffffff", selectcolor="#1e2230", activebackground="#141721", activeforeground="#ffffff",
-            font=("Segoe UI Semibold", 9)
+            bg="#141721", fg="#f8fafc", font=("Segoe UI Semibold", 9)
         )
-        cb_notif.pack(side="left")
-        tk.Label(row2, text=t("pref_notif_desc", lang), font=("Segoe UI", 8), bg="#141721", fg="#64748b").pack(side="left", padx=8)
+        cb_notif.pack(side="left", padx=(0, 24))
+        ModernTooltip(cb_notif, t("pref_notif_desc", lang))
 
-        # Fila 3: Legacy Mode
-        row3 = tk.Frame(pref_box, bg="#141721")
-        row3.pack(fill="x", padx=14, pady=3)
         legacy_var = self.app.legacy_var if self.app else tk.BooleanVar(value=False)
-        cb_legacy = tk.Checkbutton(
-            row3, text=t("pref_legacy_label", lang), variable=legacy_var,
+        cb_legacy = ModernCheckbox(
+            chk_grid2, text=t("pref_legacy_label", lang), variable=legacy_var,
             command=self._on_toggle_legacy,
-            bg="#141721", fg="#ffffff", selectcolor="#1e2230", activebackground="#141721", activeforeground="#ffffff",
-            font=("Segoe UI Semibold", 9)
+            bg="#141721", fg="#f8fafc", font=("Segoe UI Semibold", 9)
         )
         cb_legacy.pack(side="left")
-        tk.Label(row3, text=t("pref_legacy_desc", lang), font=("Segoe UI", 8), bg="#141721", fg="#64748b").pack(side="left", padx=8)
+        ModernTooltip(cb_legacy, t("pref_legacy_desc", lang))
 
         # 2. SECCIÓN: GESTOR DE ATAJOS GLOBALES
         hk_box = tk.Frame(body, bg="#141721", highlightbackground="#262b3b", highlightthickness=1)
@@ -403,7 +693,7 @@ class SettingsModal(tk.Toplevel):
         hk_header = tk.Frame(hk_box, bg="#141721")
         hk_header.pack(fill="x", padx=14, pady=(8, 2))
         tk.Label(hk_header, text=t("sec_hotkeys", lang), font=("Segoe UI Bold", 9), bg="#141721", fg="#94a3b8").pack(anchor="w")
-        tk.Label(hk_header, text=t("hotkeys_sub", lang), font=("Segoe UI", 8), bg="#141721", fg="#64748b").pack(anchor="w", pady=(1, 6))
+        tk.Label(hk_header, text=t("hotkeys_sub", lang), font=("Segoe UI", 8), bg="#141721", fg="#64748b").pack(anchor="w", pady=(1, 4))
 
         actions = [
             ("toggle_tv", t("hk_action_toggle", lang), t("hk_desc_toggle", lang)),
@@ -414,19 +704,28 @@ class SettingsModal(tk.Toplevel):
 
         for act_key, title, desc in actions:
             row = tk.Frame(hk_box, bg="#161922", highlightbackground="#262b3b", highlightthickness=1)
-            row.pack(fill="x", padx=12, pady=4, ipady=3)
+            row.pack(fill="x", padx=12, pady=3, ipady=3)
 
             inner = tk.Frame(row, bg="#161922")
-            inner.pack(fill="x", padx=10, pady=4)
+            inner.pack(fill="x", padx=10, pady=3)
 
             info_col = tk.Frame(inner, bg="#161922")
             info_col.pack(side="left", fill="both", expand=True)
 
-            lbl_title = tk.Label(info_col, text=title, font=("Segoe UI Bold", 10), bg="#161922", fg="#ffffff")
-            lbl_title.pack(anchor="w")
+            title_row = tk.Frame(info_col, bg="#161922")
+            title_row.pack(anchor="w", fill="x")
 
-            lbl_desc = tk.Label(info_col, text=desc, font=("Segoe UI", 8), bg="#161922", fg="#64748b")
-            lbl_desc.pack(anchor="w")
+            lbl_title = tk.Label(title_row, text=title, font=("Segoe UI Bold", 10), bg="#161922", fg="#ffffff")
+            lbl_title.pack(side="left")
+
+            hint_icon = tk.Label(title_row, text="ℹ️", font=("Segoe UI", 8), bg="#161922", fg="#64748b", cursor="hand2")
+            hint_icon.pack(side="left", padx=5)
+
+            # Tooltip flotante con descripción completa en hover
+            ModernTooltip(lbl_title, desc)
+            ModernTooltip(hint_icon, desc)
+            ModernTooltip(info_col, desc)
+            ModernTooltip(row, desc)
 
             ctrl_col = tk.Frame(inner, bg="#161922")
             ctrl_col.pack(side="right")
@@ -437,7 +736,7 @@ class SettingsModal(tk.Toplevel):
 
             val_lbl = tk.Label(
                 ctrl_col, text=disp_text, font=("Segoe UI Bold", 9),
-                bg="#222634", fg=disp_fg, padx=10, pady=4, width=18
+                bg="#222634", fg=disp_fg, padx=10, pady=4, width=17
             )
             val_lbl.pack(side="left", padx=(0, 6))
             self._value_labels[act_key] = val_lbl
@@ -446,7 +745,7 @@ class SettingsModal(tk.Toplevel):
                 ctrl_col, text=t("btn_record", lang),
                 command=lambda k=act_key: self._start_recording(k),
                 bg_color="#1e2230", hover_color="#2c3345", text_color="#cbd5e1",
-                font=("Segoe UI Semibold", 8), width=82, height=28, radius=6
+                font=("Segoe UI Semibold", 8), width=80, height=28, radius=6
             )
             btn_rec.pack(side="left", padx=2)
             self._record_buttons[act_key] = btn_rec
@@ -455,7 +754,7 @@ class SettingsModal(tk.Toplevel):
                 ctrl_col, text=t("btn_mouse", lang),
                 command=None,
                 bg_color="#1e2230", hover_color="#2c3345", text_color="#38bdf8",
-                font=("Segoe UI Semibold", 8), width=82, height=28, radius=6
+                font=("Segoe UI Semibold", 8), width=80, height=28, radius=6
             )
             btn_mouse.command = lambda k=act_key, b=btn_mouse: self._open_mouse_menu(k, b)
             btn_mouse.pack(side="left", padx=2)
@@ -464,7 +763,7 @@ class SettingsModal(tk.Toplevel):
                 ctrl_col, text=t("btn_clear", lang),
                 command=lambda k=act_key: self._clear_hotkey(k),
                 bg_color="#1e2230", hover_color="#7f1d1d", text_color="#f87171",
-                font=("Segoe UI Semibold", 8), width=74, height=28, radius=6
+                font=("Segoe UI Semibold", 8), width=72, height=28, radius=6
             )
             btn_del.pack(side="left", padx=2)
 
@@ -923,9 +1222,10 @@ class DisplayFlowApp:
         self._active_tray_menu = None
 
         self.root.title(self.controller.get_app_title())
-        self.root.geometry("780x780")
-        self.root.minsize(760, 760)
+        self.root.geometry("860x780")
+        self.root.minsize(820, 680)
         self.root.configure(bg="#0f1117")
+        apply_dark_title_bar(self.root)
 
         # Configurar icono propio en la ventana y barra de tareas
         self._setup_window_icon()
@@ -965,7 +1265,7 @@ class DisplayFlowApp:
 
         # Forzar iconos nativos de Win32 para asegurar que la barra de tareas muestre el icono de Fede
         self._apply_native_win32_icon()
-        self.root.bind("<Map>", lambda e: self._apply_native_win32_icon())
+        self.root.bind("<Map>", lambda e: (self._apply_native_win32_icon(), apply_dark_title_bar(self.root)))
 
     def _apply_native_win32_icon(self):
         """Aplica los iconos nativos de Win32 en la ventana y clase de ventana"""
@@ -1004,16 +1304,42 @@ class DisplayFlowApp:
         style.configure("TFrame", background="#0f1117")
         style.configure("TLabel", background="#0f1117", foreground="#f8fafc", font=("Segoe UI", 9))
         style.configure("Vertical.TScrollbar", background="#1e2230", bordercolor="#0f1117", arrowcolor="#94a3b8")
-        style.map('TCombobox', fieldbackground=[('readonly', '#1e2230')])
-        style.map('TCombobox', selectbackground=[('readonly', '#2563eb')])
-        style.map('TCombobox', selectforeground=[('readonly', '#ffffff')])
-        style.configure('TCombobox', background='#1e2230', foreground='#f8fafc', arrowcolor='#38bdf8', borderwidth=0)
+
+        # Configuración estilizada moderna para selectores desplegables (Combobox)
+        style.configure(
+            'TCombobox',
+            background='#1e2230',
+            foreground='#f8fafc',
+            fieldbackground='#1e2230',
+            bordercolor='#334155',
+            lightcolor='#334155',
+            darkcolor='#1e2230',
+            arrowcolor='#38bdf8',
+            arrowsize=11,
+            padding=[5, 2]
+        )
+        style.map('TCombobox',
+            fieldbackground=[('readonly', '#1e2230'), ('disabled', '#141721')],
+            bordercolor=[('focus', '#3b82f6'), ('hover', '#60a5fa'), ('readonly', '#334155')],
+            lightcolor=[('focus', '#3b82f6'), ('hover', '#60a5fa'), ('readonly', '#334155')],
+            arrowcolor=[('active', '#60a5fa'), ('disabled', '#64748b'), ('readonly', '#38bdf8')],
+            background=[('active', '#2563eb'), ('pressed', '#1d4ed8'), ('readonly', '#1e2230')],
+            foreground=[('disabled', '#64748b'), ('readonly', '#f8fafc')],
+            selectbackground=[('readonly', '#2563eb')],
+            selectforeground=[('readonly', '#ffffff')]
+        )
         try:
             self.root.option_add('*TCombobox*Listbox.background', '#161922')
             self.root.option_add('*TCombobox*Listbox.foreground', '#f8fafc')
             self.root.option_add('*TCombobox*Listbox.selectBackground', '#2563eb')
             self.root.option_add('*TCombobox*Listbox.selectForeground', '#ffffff')
-            self.root.option_add('*TCombobox*Listbox.font', ('Segoe UI Semibold', 8))
+            self.root.option_add('*TCombobox*Listbox.font', ('Segoe UI Semibold', 9))
+            self.root.option_add('*TCombobox*Listbox.relief', 'flat')
+            self.root.option_add('*TCombobox*Listbox.borderWidth', 1)
+            self.root.option_add('*TCombobox*Listbox.highlightThickness', 1)
+            self.root.option_add('*TCombobox*Listbox.highlightColor', '#3b82f6')
+            self.root.option_add('*TCombobox*Listbox.highlightBackground', '#334155')
+            self.root.option_add('*TCombobox*Listbox.activestyle', 'none')
         except Exception:
             pass
 
@@ -1303,9 +1629,6 @@ class DisplayFlowApp:
     def _on_hotkeys_updated(self):
         self._on_settings_updated()
 
-    def _on_canvas_configure(self, event):
-        self.canvas.itemconfig(self.canvas_window, width=event.width)
-
     def _refresh_monitors_ui(self, force=False):
         """
         Reconstruye dinámicamente las tarjetas de monitores solo si el estado real cambió,
@@ -1370,14 +1693,14 @@ class DisplayFlowApp:
         inner = tk.Frame(card, bg=card_bg)
         inner.pack(fill="x", padx=14, pady=6)
 
-        # Icono
-        icon_str = "📺" if is_tv else "🖥️"
-        icon_lbl = tk.Label(inner, text=icon_str, font=("Segoe UI", 22), bg=card_bg)
+        # Icono de pantalla (U+1F5A5 sin \ufe0f para que tenga exactamente 43px al igual que el TV 📺)
+        icon_str = "📺" if is_tv else "\U0001f5a5"
+        icon_lbl = tk.Label(inner, text=icon_str, font=("Segoe UI", 20), bg=card_bg)
         icon_lbl.pack(side="left", padx=(0, 12))
 
         # Acciones a la derecha (se empaquetan primero para garantizar espacio intacto de controles y Hz)
         actions_box = tk.Frame(inner, bg=card_bg)
-        actions_box.pack(side="right", padx=(8, 0))
+        actions_box.pack(side="right", padx=(4, 0))
 
         # Información central (ocupa todo el espacio restante disponible)
         info_box = tk.Frame(inner, bg=card_bg)
@@ -1429,7 +1752,7 @@ class DisplayFlowApp:
             details_list.append(f"{t('card_id', lang)}: {m.short_id}")
 
         specs_lbl = tk.Label(
-            info_box, text="  •  ".join(details_list),
+            info_box, text=" • ".join(details_list),
             font=("Segoe UI", 8), bg=card_bg, fg="#94a3b8"
         )
         specs_lbl.pack(anchor="w", pady=(2, 0))
@@ -1438,14 +1761,14 @@ class DisplayFlowApp:
         if m.is_active:
             status_lbl = tk.Label(
                 actions_box, text=t("badge_active", lang), font=("Segoe UI Bold", 8),
-                bg="#064e3b", fg="#34d399", padx=8, pady=4
+                bg="#064e3b", fg="#34d399", padx=6, pady=3
             )
         else:
             status_lbl = tk.Label(
                 actions_box, text=t("badge_off", lang), font=("Segoe UI Bold", 8),
-                bg="#262b3b", fg="#94a3b8", padx=8, pady=4
+                bg="#262b3b", fg="#94a3b8", padx=6, pady=3
             )
-        status_lbl.pack(side="right", padx=(4, 0))
+        status_lbl.pack(side="right", padx=(2, 0))
 
         # 2. Botón individual para activar/desactivar (si no es el primario)
         if not m.is_primary:
@@ -1454,16 +1777,16 @@ class DisplayFlowApp:
                     actions_box, text=t("btn_card_turn_off", lang),
                     command=lambda mon=m: self._toggle_specific_monitor(mon),
                     bg_color="#7f1d1d", hover_color="#991b1b",
-                    font=("Segoe UI Semibold", 8), width=85, height=28, radius=6
+                    font=("Segoe UI Semibold", 8), width=74, height=26, radius=6
                 )
             else:
                 btn_toggle = ModernButton(
                     actions_box, text=t("btn_card_turn_on", lang),
                     command=lambda mon=m: self._toggle_specific_monitor(mon),
                     bg_color="#065f46", hover_color="#047857",
-                    font=("Segoe UI Semibold", 8), width=85, height=28, radius=6
+                    font=("Segoe UI Semibold", 8), width=74, height=26, radius=6
                 )
-            btn_toggle.pack(side="right", padx=4)
+            btn_toggle.pack(side="right", padx=2)
 
         # 3. Botón para setear o quitar como Televisor
         if is_tv:
@@ -1471,17 +1794,17 @@ class DisplayFlowApp:
                 actions_box, text=t("btn_unset_tv", lang),
                 command=lambda mon=m: self._unset_as_tv(mon),
                 bg_color="#262b3b", hover_color="#374151", text_color="#cbd5e1",
-                font=("Segoe UI Semibold", 8), width=90, height=28, radius=6
+                font=("Segoe UI Semibold", 8), width=80, height=26, radius=6
             )
-            btn_unset_tv.pack(side="right", padx=4)
+            btn_unset_tv.pack(side="right", padx=2)
         else:
             btn_set_tv = ModernButton(
                 actions_box, text=t("btn_set_tv", lang),
                 command=lambda mon=m: self._set_as_tv(mon),
                 bg_color="#1e2230", hover_color="#3730a3", text_color="#cbd5e1",
-                font=("Segoe UI Semibold", 8), width=115, height=28, radius=6
+                font=("Segoe UI Semibold", 8), width=90, height=26, radius=6
             )
-            btn_set_tv.pack(side="right", padx=4)
+            btn_set_tv.pack(side="right", padx=2)
 
             # 3.5 Botón para designar como Monitor Principal por defecto
             if not getattr(m, 'is_designated_primary', False):
@@ -1489,25 +1812,28 @@ class DisplayFlowApp:
                     actions_box, text=t("btn_set_primary", lang),
                     command=lambda mon=m: self._set_as_primary(mon),
                     bg_color="#1e2230", hover_color="#854d0e", text_color="#fef08a",
-                    font=("Segoe UI Semibold", 8), width=110, height=28, radius=6
+                    font=("Segoe UI Semibold", 8), width=88, height=26, radius=6
                 )
-                btn_set_primary.pack(side="right", padx=4)
+                btn_set_primary.pack(side="right", padx=2)
 
         # 4. Selector de Tasa de Refresco de Inicio (Hz)
         if m.available_refresh_rates:
             hz_box = tk.Frame(actions_box, bg=card_bg)
-            hz_box.pack(side="right", padx=(0, 6))
+            hz_box.pack(side="right", padx=(0, 3))
 
             hz_lbl = tk.Label(hz_box, text=t("card_startup_hz", lang), font=("Segoe UI", 8), bg=card_bg, fg="#94a3b8")
-            hz_lbl.pack(side="left", padx=(0, 3))
+            hz_lbl.pack(side="left", padx=(0, 2))
 
-            current_hz_val = f"{m.startup_hz or m.hz} Hz"
-            hz_var = tk.StringVar(value=current_hz_val)
+            preferred_hz = m.startup_hz or (m.hz if m.hz > 0 else (m.available_refresh_rates[0] if m.available_refresh_rates else 60))
+            current_hz_val = f"{preferred_hz} Hz"
             hz_options = [f"{x} Hz" for x in m.available_refresh_rates]
+            if current_hz_val not in hz_options and hz_options:
+                current_hz_val = hz_options[0]
+            hz_var = tk.StringVar(value=current_hz_val)
 
             cb_hz = ttk.Combobox(
                 hz_box, textvariable=hz_var, values=hz_options,
-                state="readonly", width=7, font=("Segoe UI Semibold", 8)
+                state="readonly", width=5, font=("Segoe UI Semibold", 8)
             )
             cb_hz.pack(side="left")
 
@@ -1662,35 +1988,13 @@ class DisplayFlowApp:
         self._refresh_monitors_ui(force=True)
 
     def _check_startup_enabled(self):
-        startup_dir = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
-        vbs_path = os.path.join(startup_dir, "DisplaySwitch.vbs")
-        return os.path.exists(vbs_path)
+        return self.controller.is_startup_enabled()
 
     def _on_toggle_startup(self):
         enabled = self.startup_var.get()
-        startup_dir = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
-        vbs_target = os.path.join(startup_dir, "DisplaySwitch.vbs")
-        
-        app_dir = os.path.dirname(os.path.abspath(__file__))
-        source_vbs = os.path.join(app_dir, "DisplaySwitch.vbs")
-
-        try:
-            old_vbs_target = os.path.join(startup_dir, "DisplayFlow.vbs")
-            if os.path.exists(old_vbs_target):
-                try: os.remove(old_vbs_target)
-                except Exception: pass
-            if enabled:
-                if os.path.exists(source_vbs):
-                    import shutil
-                    shutil.copy2(source_vbs, vbs_target)
-                else:
-                    with open(vbs_target, "w", encoding="utf-8") as f:
-                        f.write(f'CreateObject("Wscript.Shell").Run "pyw ""{os.path.join(app_dir, "main.py")}""", 0, False\n')
-            else:
-                if os.path.exists(vbs_target):
-                    os.remove(vbs_target)
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo modificar el inicio con Windows: {e}")
+        ok, msg = self.controller.set_startup_enabled(enabled)
+        if not ok:
+            messagebox.showerror("Error", msg)
 
     def show_tray_menu(self, x=None, y=None):
         """Muestra el menú contextual flotante moderno en el System Tray"""
